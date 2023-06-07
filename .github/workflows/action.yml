@@ -1,0 +1,73 @@
+name:   Deploy to S3 my angular app
+
+on: [push]
+
+jobs:
+  init:
+    runs-on:    ubuntu-latest
+    env:
+        BUCKET_NAME: angular-deployed-application-0001
+    steps:
+        -   name:   Install AWS Cli
+            run:    |
+                sudo apt-get update
+                sudo apt-get install -y awscli
+        -   name:   Configure AWS credentials
+            uses:   aws-actions/configure-aws-credentials@v1
+            with:
+                aws-access-key-id:  ${{ secrets.AWS_ACCESS_KEY_ID }}
+                aws-secret-access-key:  ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+                aws-session-token:  ${{ secrets.AWS_SESSION_TOKEN }}
+                aws-region: eu-west-1
+        -   name:   Create a S3 Bucket
+            run:    aws s3 mb s3://${{ env.BUCKET_NAME }}
+        -   name:   Enable publix access to the bucket
+            run:    |
+                aws s3api put-public-access-block \
+                    --bucket ${{ env.BUCKET_NAME }} \
+                    --public-access-block-configuration "BlockPublicAcls=false,IgnorePublicAcls=false,BlockPublicPolicy=false,RestrictPublicBuckets=false"
+        -   name:   Update the bucket policy for public read access
+            run:    |
+                aws s3api put-bucket-policy --bucket ${{ env.BUCKET_NAME }} --policy "{
+                \"Version\": \"2012-10-17\",
+                \"Statement\": [
+                    {
+                        \"Sid\": \"PublicReadGetObject\",
+                        \"Effect\": \"Allow\",
+                        \"Principal\": \"*\",
+                        \"Action\": \"s3:GetObject\",
+                        \"Resource\": \"arn:aws:s3:::${{ env.BUCKET_NAME }}/*\"
+                    }
+                ]
+                }"
+        -   name:   Enable the s3 bucket to host the index and error page
+            run:    aws s3 website "s3://${{ env.BUCKET_NAME }}" --index-document index.html --error-document index.html
+  
+
+  build:
+    runs-on:    ubuntu-latest
+    needs:  init
+    env:
+        BUCKET_NAME: angular-deployed-application-0001
+    steps:
+        -   name:   Check out code
+            uses:   actions/checkout@v3
+        -   name:   Set up Node js version
+            uses:   actions/setup-node@v3
+            with:
+                node-version: '18.x'  
+        -   name:   Install the app and build it
+            run:    |
+                npm install
+                npm run build --if-present
+        -   name:   Configure AWS credentials
+            uses:   aws-actions/configure-aws-credentials@v1
+            with:
+                aws-access-key-id:  ${{ secrets.AWS_ACCESS_KEY_ID }}
+                aws-secret-access-key:  ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+                aws-session-token:  ${{ secrets.AWS_SESSION_TOKEN }}
+                aws-region: eu-west-1
+        -   name:   Upload the static website to s3
+            run:    |
+                cd dist
+                aws s3 sync ./angular-acg "s3://${{ env.BUCKET_NAME }}"
